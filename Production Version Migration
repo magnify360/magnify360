@@ -1,0 +1,1071 @@
+*&---------------------------------------------------------------------*
+*& Report  ZXXXXXXX
+*&
+*&---------------------------------------------------------------------*
+*| Programme........ZXXXXXXXX                                          |
+*| Title ...........Production Version Migration                       |
+*| Transport........DEXXXXXXXX                                         |
+*+---------------------------------------------------------------------+
+*| Author........... Saumya Mahapatra                                  |
+*| ID développement. XXXXXXX                                           |
+*| Description...... This Program is for Material Production Version   |
+*|                   Migration based on plant wise.                    |
+*|                   This program fetch the data of source system      |
+*|                    via RFC and then fill the data through BDC in    |
+*|                   target system.		                             |
+*&---------------------------------------------------------------------*
+*|---------------------------------------------------------------------|
+*|Version Date    Auteur         Signature    Object     Transport     |
+*|001    	    Saumya Mahapatra              				     |
+*|---------------------------------------------------------------------|
+*&---------------------------------------------------------------------*
+REPORT zXXXXXXX MESSAGE-ID zpfr_pp.
+
+**** Program includes
+INCLUDE : zXXXXXXXXtop,      " Top include
+          zXXXXXXXXsel,      " selection screen
+          zXXXXXXXXfor.      " subroutine include
+
+* initialization event
+INITIALIZATION.
+  PERFORM f_migration_init.
+
+*At SELECTION-SCREEN OUTPUT Event
+AT SELECTION-SCREEN OUTPUT.
+  Perform f_screen_modify.
+
+**At SELECTION-SCREEN event
+AT SELECTION-SCREEN.
+  PERFORM f_validation_plant.   " Plant Validation
+  PERFORM f_validation_logsys.  "Logical system validaton
+
+** Main Processing.
+START-OF-SELECTION.
+*  IF s_werks IS NOT INITIAL.
+    IF t_r_werks IS NOT INITIAL.
+      LOOP AT t_r_werks INTO lr_werks.
+        PERFORM f_append_log USING _red
+                                  ' '
+                                  lr_werks-low
+                                  ' '
+                                  text-005
+                                  .
+      ENDLOOP.
+    ENDIF.
+*   whole processing of entered table would be here
+  IF s_werks[] IS NOT INITIAL.
+    PERFORM f_fetch_mkal USING 'MKAL'.
+  ENDIF.
+
+*** Field catalog of log
+  PERFORM f_fieldcat.
+*** write in spool.
+  PERFORM f_spool_entry.
+*** Display log
+  PERFORM f_display_log.
+
+
+
+*&---------------------------------------------------------------------*
+*&  Include           ZXXXXXXXXTOP
+*&---------------------------------------------------------------------*
+*| Programme........ZXXXXXXXX                                          |
+*| Title ...........Production Version Migration                       |
+*| Transport........DXXXXXXXXX                                         |
+*+---------------------------------------------------------------------+
+*| Author........... Saumya Mahapatra                                  |
+*| ID développement. XXXXXXXX                                           |
+*| Description...... This is TOP include for Material Production       |
+*|                   Version Migration                                 |
+*&---------------------------------------------------------------------*
+*|---------------------------------------------------------------------|
+*|Version Date    Auteur         Signature    Object     Transport     |
+*|001    	   Saumya Mahapatra              XXXXXXXX    DXXXXXXXXX    |
+*|---------------------------------------------------------------------|
+*&---------------------------------------------------------------------*
+
+*** Constants Declaration ***********************************
+CONSTANTS : _XXXXXXXX TYPE zbfr_objectid VALUE 'XXXXXXXX',
+            _werks   TYPE zbfr_fld1 VALUE 'WERKS',
+            _bdatu   TYPE zbfr_fld1 VALUE 'BDATU',
+            _c_x     TYPE char1 VALUE 'X',
+            _red     TYPE char4 VALUE '@0A@',  "Error
+            _green   TYPE char4 VALUE '@08@'. "Success
+
+*** Type declaration ****************************************
+TYPES : BEGIN OF ty_plant,
+          zbfr_fld1   TYPE zbfr_fld1,
+          zbfr_value1 TYPE zbfr_value1,
+        END OF ty_plant.
+
+TYPES: BEGIN OF ty_log,
+         status   TYPE char4,
+         material TYPE matnr,
+         plant    TYPE werks_d,
+         verid    TYPE verid,
+         message  TYPE bapi_msg,
+       END OF ty_log,
+       tty_tab512  TYPE STANDARD TABLE OF tab512,
+       tty_fields  TYPE STANDARD TABLE OF rfc_db_fld,
+       tty_options TYPE STANDARD TABLE OF rfc_db_opt,
+       tty_log     TYPE STANDARD TABLE OF ty_log.
+
+*** Range Declaration ***************************************
+TYPES :  r_werks TYPE RANGE OF werks_d.
+DATA  :  lr_werks  TYPE LINE OF r_werks,                    "#EC NEEDED
+         t_r_werks TYPE r_werks.                            "#EC NEEDED
+
+*** Global Internal Table ***********************************
+DATA: t_log   TYPE tty_log,                                 "#EC NEEDED
+      t_plant TYPE TABLE OF ty_plant,                       "#EC NEEDED
+      v_werks TYPE werks_d,
+      v_matnr TYPE matnr.
+
+*** Global Workarea *****************************************
+DATA : w_log   TYPE ty_log,                                 "#EC NEEDED
+       y_plant TYPE ty_plant.                               "#EC NEEDED
+
+*** Global Variables *****************************************
+DATA: v_process  TYPE i,
+      v_success  TYPE i,
+      v_error    TYPE i,
+      v_spool_no TYPE rspoid.
+
+*** For ALV Log display *************************************
+TYPE-POOLS: slis , abap.
+DATA: t_fcat TYPE slis_t_fieldcat_alv,                      "#EC NEEDED
+      w_fcat TYPE slis_fieldcat_alv.                        "#EC NEEDED
+
+
+*----------------------------------------------------------------------*
+***INCLUDE ZXXXXXXXSEL.
+*----------------------------------------------------------------------*
+*| Programme........ZXXXXXXXX                                          |
+*| Title ...........Production Version Migration                       |
+*| Transport........DXXXXXXXXX                                         |
+*+---------------------------------------------------------------------+
+*| Author........... Saumya Mahapatra                                  |
+*| ID development... ZXXXXXXXX                                         |
+*| Description...... This is an include for subroutine for the program |
+*|                   Production Version Migration                      |
+*&---------------------------------------------------------------------*
+*|---------------------------------------------------------------------|
+*|Version Date    Auteur         Signature    Object     Transport     |
+*|001    	   Saumya Mahapatra              XXXXXXXX    DXXXXXXXXX    |
+*|---------------------------------------------------------------------|
+*&---------------------------------------------------------------------*
+
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME.
+PARAMETERS: p_table TYPE tabname DEFAULT 'MKAL' MODIF ID tab
+                                 NO-DISPLAY.
+SELECT-OPTIONS : s_werks FOR v_werks NO INTERVALS OBLIGATORY, "Plant
+                 s_matnr FOR v_matnr NO INTERVALS. "Material
+SELECTION-SCREEN: END OF BLOCK b1.
+
+*** Source RFC
+SELECTION-SCREEN: BEGIN OF BLOCK b2 WITH FRAME.
+PARAMETERS p_bdatu TYPE bdatu OBLIGATORY.     "Go-Live Date
+PARAMETERS: p_logsys TYPE rfcdest OBLIGATORY. "Source RFC
+SELECTION-SCREEN: END OF BLOCK b2.
+*----------------------------------------------------------------------*
+***INCLUDE ZPFRRE018FOR.
+*----------------------------------------------------------------------*
+*| Programme........ZXXXXXXXX                                          |
+*| Title ...........Production Version Migration                       |
+*| Transport........DXXXXXXXX                                         |
+*+---------------------------------------------------------------------+
+*| Author........... Saumya Mahapatra                                  |
+*| ID développement. XXXXXXXX
+*| Description...... This is an include for subroutine for the program |
+*|                   Production Version migration                      |
+*&---------------------------------------------------------------------*
+*|---------------------------------------------------------------------|
+*|Version Date    Auteur         Signature    Object     Transport     |
+*|001    	    Saumya Mahapatra              XXXXXXXX    DXXXXXXXX    |
+*|---------------------------------------------------------------------|
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  F_FETCH_MKAL
+*&---------------------------------------------------------------------*
+
+FORM f_fetch_mkal USING fp_table  TYPE dd02l-tabname.
+
+** Constants
+  CONSTANTS : _lc11 TYPE char2 VALUE '11',
+              _lc12 TYPE char2 VALUE '12',
+              _lc13 TYPE char2 VALUE '13',
+              _lc14 TYPE char2 VALUE '14',
+              _lc15 TYPE char2 VALUE '15',
+              _lc16 TYPE char2 VALUE '16',
+              _lc17 TYPE char2 VALUE '17',
+              _lc18 TYPE char2 VALUE '18',
+              _lc19 TYPE char2 VALUE '19',
+              _lc20 TYPE char2 VALUE '20',
+              _lc21 TYPE char2 VALUE '21',
+              _lc22 TYPE char2 VALUE '22',
+              _lc23 TYPE char2 VALUE '23',
+              _lc24 TYPE char2 VALUE '24',
+              _lc25 TYPE char2 VALUE '25'.
+
+**Type declaration
+*For MKAL with flag
+  TYPES : BEGIN OF ty_mkal1.
+          INCLUDE TYPE mkal.
+  TYPES : flag TYPE char1.
+  TYPES : END OF ty_mkal1.
+
+**For MARC
+  TYPES: BEGIN OF ty_marc,
+           matnr TYPE matnr,
+           werks TYPE werks_d,
+         END OF ty_marc.
+
+** Local internal table
+  DATA: lt_data    TYPE tty_tab512,
+        lt_mkal    TYPE TABLE OF mkal,
+        lt_fields  TYPE tty_fields,
+        lt_return  TYPE bapiret2_t,
+        lt_options TYPE tty_options,
+        lt_mkal1   TYPE STANDARD TABLE OF ty_mkal1,
+        lt_marc    TYPE STANDARD TABLE OF ty_marc.
+
+** Local workarea
+  DATA: ly_data    TYPE tab512,
+        ly_mkal    TYPE mkal,
+        ly_fields  TYPE rfc_db_fld,
+        ly_return  TYPE bapiret2,
+        ly_options TYPE tty_options WITH HEADER LINE,
+        ly_werks   LIKE LINE OF s_werks.
+
+** Local Variable
+  DATA : lv_subrc TYPE sy-subrc,
+         lv_matnr TYPE matnr,
+         lv_werks TYPE werks_d,
+         lv_verid TYPE verid.
+
+** Field symbol declaration
+  FIELD-SYMBOLS: <fs_mkal1> TYPE ty_mkal1.
+
+** Populate fields of
+  PERFORM f_fill_fields  USING  'MATNR' "Material.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'WERKS' "Plant.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'VERID' "Version id.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'BDATU' "Run-time end:date.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'ADATU' "Valid-from date.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'STLAL' "Alternative BOM.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'STLAN' "BOM Usage.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLNTY' "Task List Type.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLNNR' "Key for Task List Group.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'ALNAL' "Group Counter.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'TEXT1' "Short text.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'BSTMI' "Lower value lot-size interval.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'BSTMA' "Upper value lot-size interval.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'ALORT' "Receiving storage location.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLTYG' "Task List Type.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLNNG' "Key for Task List Group.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'ALNAG' "Group Counter.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLTYM' "Task List Type.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PLNNM' "Key for Task List Group.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'ALNAM' "Group Counter.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'CSPLT' "Apportionment Structure.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'MATKO' "Other material for which BOM
+                  CHANGING lt_fields .    "and task list are maintained.
+  PERFORM f_fill_fields  USING  'ELPRO' " issue storage location.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'PRVBE' "Default supply area.
+                  CHANGING lt_fields .
+  PERFORM f_fill_fields  USING  'UCMAT' "Reference Material for
+                  CHANGING lt_fields .   "Original Batches.
+
+** Validation of data by plant during RFC calling
+  LOOP AT s_werks INTO ly_werks.
+    CLEAR : ly_options.
+    IF sy-tabix EQ 1.
+      CONCATENATE 'WERKS' 'EQ' ly_werks-low
+      INTO ly_options-text SEPARATED BY space.
+    ELSE.
+      CONCATENATE 'OR' 'WERKS' 'EQ' ly_werks-low
+      INTO ly_options-text SEPARATED BY space.
+    ENDIF.
+    APPEND ly_options TO lt_options.
+    CLEAR : ly_werks-low.
+  ENDLOOP.
+
+** Fetch the records of corresponding table from requested system.
+  IF p_logsys IS NOT INITIAL.
+    CALL FUNCTION 'RFC_READ_TABLE' DESTINATION p_logsys
+      EXPORTING
+        query_table          = fp_table
+      TABLES
+        options              = lt_options
+        fields               = lt_fields
+        data                 = lt_data
+      EXCEPTIONS
+        table_not_available  = 1
+        table_without_data   = 2
+        option_not_valid     = 3
+        field_not_valid      = 4
+        not_authorized       = 5
+        data_buffer_exceeded = 6
+        OTHERS               = 7.
+    IF sy-subrc EQ 0.
+
+      CLEAR ly_data.
+      LOOP AT lt_data INTO ly_data.
+
+        CLEAR ly_fields.
+** populate the fields with offset value
+        LOOP AT lt_fields INTO ly_fields.
+          IF sy-tabix = 1.
+            ly_mkal-matnr = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 2.
+            ly_mkal-werks = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 3.
+            ly_mkal-verid = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 4.
+            ly_mkal-bdatu = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 5.
+            ly_mkal-adatu = ly_data+ly_fields-offset(ly_fields-length).
+            CLEAR ly_mkal-adatu.
+            ly_mkal-adatu = p_bdatu.
+          ELSEIF sy-tabix = 6 .
+            ly_mkal-stlal = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 7.
+            ly_mkal-stlan = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 8 .
+            ly_mkal-plnty = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 9 .
+            ly_mkal-plnnr = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = 10 .
+            ly_mkal-alnal = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc11 .
+            ly_mkal-text1 = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc12 .
+            ly_mkal-bstmi = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc13 .
+            ly_mkal-bstma = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc14 .
+            ly_mkal-alort = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc15 .
+            ly_mkal-pltyg = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc16 .
+            ly_mkal-plnng = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc17.
+            ly_mkal-alnag = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc18 .
+            ly_mkal-pltym = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc19 .
+            ly_mkal-plnnm = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc20 .
+            ly_mkal-alnam = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc21 .
+            ly_mkal-csplt = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc22 .
+            ly_mkal-matko = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc23.
+            ly_mkal-elpro = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc24 .
+            ly_mkal-prvbe = ly_data+ly_fields-offset(ly_fields-length).
+          ELSEIF sy-tabix = _lc25 .
+            ly_mkal-ucmat = ly_data+ly_fields-offset(ly_fields-length).
+          ENDIF.
+
+        ENDLOOP.    " For lt_fields
+        APPEND ly_mkal TO lt_mkal.
+        CLEAR ly_mkal.
+        CLEAR ly_data.
+
+      ENDLOOP.   " For lt_data
+          ELSE.
+     MESSAGE text-009 TYPE 'I'. "No data found for this selection
+      LEAVE LIST-PROCESSING.
+    ENDIF.
+  ENDIF.
+
+** Deleting other Plants Data and Data without material
+  IF s_werks IS NOT INITIAL.
+    DELETE lt_mkal WHERE NOT werks IN s_werks.
+    DELETE lt_mkal WHERE matnr = ' '.
+  ENDIF.
+
+** Remove other materials, not in selection screen
+  IF s_matnr IS NOT INITIAL.
+    DELETE lt_mkal WHERE NOT matnr IN s_matnr.
+  ENDIF.
+
+** Selecting data from MARC for Material and Plant from MKAL
+  IF NOT lt_mkal[] IS INITIAL.
+    lt_mkal1[] = lt_mkal[].  "Assigning filtered data
+    SORT lt_mkal1 BY matnr werks.
+
+** fetch marc data
+    SELECT matnr
+           werks
+      FROM marc
+      INTO TABLE lt_marc
+      FOR ALL ENTRIES IN lt_mkal1
+      WHERE matnr = lt_mkal1-matnr
+      AND   werks = lt_mkal1-werks.
+    IF sy-subrc = 0.
+      SORT lt_marc BY matnr werks.
+    ENDIF.
+
+    LOOP AT lt_mkal1 ASSIGNING <fs_mkal1>.
+** Cheking for the material and plant
+      READ TABLE lt_marc TRANSPORTING NO FIELDS
+      WITH KEY matnr = <fs_mkal1>-matnr
+               werks = <fs_mkal1>-werks
+              BINARY SEARCH.
+      IF sy-subrc <> 0.
+        <fs_mkal1>-flag = abap_true.
+
+** Error
+        PERFORM f_append_log USING _red
+                                   <fs_mkal1>-matnr
+                                   <fs_mkal1>-werks
+                                   <fs_mkal1>-verid
+                                   text-004.
+      ENDIF.
+
+      IF <fs_mkal1>-bdatu LT p_bdatu.
+        <fs_mkal1>-flag = abap_true.
+
+** Error
+        PERFORM f_append_log USING _red
+                                   <fs_mkal1>-matnr
+                                   <fs_mkal1>-werks
+                                   <fs_mkal1>-verid
+                                   text-007.
+      ENDIF.
+    ENDLOOP.
+
+** Deleting materials which are not in Shift and
+** Deleting version which ending validity date beyond go-live date
+    DELETE lt_mkal1 WHERE flag = abap_true.
+
+** MOVE data from lt_mkal1 TO lt_mkal.
+    REFRESH lt_mkal[].
+    lt_mkal[] = lt_mkal1[].
+
+** now we have all the data in internbal table.
+    IF lt_mkal[] IS NOT INITIAL.
+** Upload data through BDC FM
+      CALL FUNCTION 'ZPXX_MKAL_BDC_PRODVER'
+        EXPORTING
+          t_mkal   = lt_mkal
+        IMPORTING
+          subrc    = lv_subrc
+          t_return = lt_return
+        EXCEPTIONS
+          OTHERS   = 1.
+** Prepare the log
+      IF sy-subrc EQ 0.
+        LOOP AT lt_mkal INTO ly_mkal.
+          READ TABLE lt_return INTO ly_return
+                               WITH KEY  message_v1 = ly_mkal-matnr
+                                         message_v2 = ly_mkal-werks
+                                         message_v3 = ly_mkal-verid.
+          IF sy-subrc = 0.
+            CLEAR : lv_matnr, lv_werks, lv_verid.
+            lv_matnr  = ly_return-message_v1.  "Material
+            lv_werks  = ly_return-message_v2.  "Plant
+            lv_verid  = ly_return-message_v3.  "Version Id
+** Error
+            PERFORM f_append_log USING _red
+                                      lv_matnr
+                                      lv_werks
+                                      lv_verid
+                                      ly_return-message.
+          ELSE.
+** Success
+            PERFORM f_append_log USING _green
+                                       ly_mkal-matnr
+                                       ly_mkal-werks
+                                       ly_mkal-verid
+                                       text-006.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_FILL_FIELDS
+*&---------------------------------------------------------------------*
+
+FORM f_fill_fields  USING    fp_field TYPE fieldname
+                    CHANGING fp_t_field TYPE tty_fields.
+** workarea declaration used for RFC FM
+  DATA: ly_fields TYPE rfc_db_fld.
+
+  CLEAR ly_fields.
+  ly_fields-fieldname = fp_field.   " Field name which is desirable
+  APPEND ly_fields TO fp_t_field.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_VALIDATION_PLANT
+*&---------------------------------------------------------------------*
+
+FORM f_validation_plant.
+
+  DATA: ly_werks LIKE LINE OF s_werks.
+
+  IF NOT s_werks[] IS INITIAL.
+
+    CLEAR ly_werks.
+    LOOP AT s_werks INTO ly_werks.
+      READ TABLE t_plant TRANSPORTING NO FIELDS
+                          WITH KEY zbXX_fld1 = _werks
+                          zbXX_value1 = ly_werks-low
+                          BINARY SEARCH.
+** fill range table by plants which are out of scope
+      IF sy-subrc NE 0.
+        lr_werks-sign   = 'I'.
+        lr_werks-option = 'EQ'.
+        lr_werks-low    = ly_werks-low.
+        APPEND lr_werks TO t_r_werks.
+      ENDIF.
+      CLEAR : ly_werks,lr_werks.
+    ENDLOOP.
+**  remove unwanted plants
+    IF t_r_werks[] IS NOT INITIAL.
+      DELETE s_werks WHERE low IN t_r_werks.
+    ENDIF.
+  ENDIF.
+*****
+
+****
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_APPEND_LOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_append_log USING fp_status TYPE char4
+                        fp_matnr  TYPE matnr
+                        fp_werks  TYPE werks_d
+                        fp_verid  TYPE verid
+                        fp_msg    TYPE bapi_msg.
+
+** Append the log
+  CLEAR:  w_log.
+  w_log-status     = fp_status.
+  w_log-material   = fp_matnr.
+  w_log-plant      = fp_werks.
+  w_log-verid      = fp_verid.
+  w_log-message    = fp_msg.
+  APPEND w_log TO t_log.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_FIELDCAT
+*&---------------------------------------------------------------------*
+
+FORM f_fieldcat .
+
+** Constants
+  CONSTANTS : _mat18 TYPE char2 VALUE '18',
+              _vid18 TYPE char2 VALUE '18',
+              _msg80 TYPE char2 VALUE '80'.
+
+  CLEAR: w_fcat.
+  w_fcat-fieldname   = 'STATUS'.
+  w_fcat-seltext_m   = text-010.
+  w_fcat-col_pos     = 1.
+  APPEND w_fcat TO t_fcat.
+  CLEAR  w_fcat.
+  w_fcat-fieldname   = 'MATERIAL'.
+  w_fcat-seltext_m   = text-011.
+  w_fcat-col_pos     = 2.
+  w_fcat-outputlen = _mat18.
+  APPEND w_fcat TO t_fcat.
+  CLEAR  w_fcat.
+  w_fcat-fieldname   = 'PLANT'.
+  w_fcat-seltext_m   = text-012.
+  w_fcat-col_pos     = 3.
+  APPEND w_fcat TO t_fcat.
+  CLEAR  w_fcat.
+  w_fcat-fieldname   = 'VERID'.
+  w_fcat-seltext_m   = text-013.
+  w_fcat-col_pos     = 4.
+  w_fcat-outputlen = _vid18.
+  APPEND w_fcat TO t_fcat.
+  CLEAR  w_fcat.
+  w_fcat-fieldname   = 'MESSAGE'.
+  w_fcat-seltext_m   = text-014.
+  w_fcat-col_pos     = 5.
+  w_fcat-outputlen = _msg80.
+  APPEND w_fcat TO t_fcat.
+  CLEAR  w_fcat.
+
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  F_DISPLAY_LOG
+*&---------------------------------------------------------------------*
+
+FORM f_display_log .
+
+  DATA : lv_repid TYPE sy-repid.
+
+  lv_repid = sy-repid.
+  SORT t_log ASCENDING BY material plant verid message.
+  DELETE ADJACENT DUPLICATES FROM t_log COMPARING ALL FIELDS.
+  SORT t_log BY status.
+**Total process record
+  DESCRIBE TABLE t_log LINES v_process.
+* to be Written in top of page
+  CLEAR: v_success, v_error.
+  LOOP AT t_log INTO w_log.
+    CASE w_log-status.
+      WHEN _green.
+        v_success = v_success + 1.
+      WHEN _red.
+        v_error   = v_error + 1.
+      WHEN OTHERS.
+*        v_warning = v_warning + 1.
+    ENDCASE.
+  ENDLOOP.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program     = lv_repid
+      i_callback_top_of_page = 'TOP_OF_PAGE'
+      it_fieldcat            = t_fcat[]
+      i_save                 = 'X'
+    TABLES
+      t_outtab               = t_log
+    EXCEPTIONS ##FM_SUBRC_OK
+      program_error          = 1
+      OTHERS                 = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+
+ENDFORM.
+*-------------------------------------------------------------------*
+* Form  TOP_OF_PAGE                                                 *
+*-------------------------------------------------------------------*
+* ALV Report Header                                                 *
+*-------------------------------------------------------------------*
+FORM top_of_page.
+
+  DATA: lt_header TYPE slis_t_listheader,
+        wa_head   TYPE slis_listheader.
+
+* Fill up the table to store information to be displayed
+* in top of page
+* Tital num of entries
+  wa_head-typ  = 'S'.
+  wa_head-info = v_process.
+  wa_head-key  = text-008.
+  APPEND wa_head TO lt_header.
+  CLEAR: wa_head.
+** Success Entries
+  wa_head-typ    = 'S'.
+  wa_head-key    = text-001.
+  wa_head-info   = v_success.
+  APPEND wa_head TO lt_header.
+  CLEAR: wa_head.
+** Error Entries
+  wa_head-typ    = 'S'.
+  wa_head-key    = text-002.
+  wa_head-info   = v_error.
+  APPEND wa_head TO lt_header.
+  CLEAR: wa_head.
+** Spool Entries
+  wa_head-typ    = 'S'.
+  wa_head-key    = text-003.
+  wa_head-info   = v_spool_no.
+  APPEND wa_head TO lt_header.
+
+* Write on top of page
+  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+    EXPORTING
+      it_list_commentary = lt_header.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_SPOOL_ENTRY
+*&---------------------------------------------------------------------*
+FORM f_spool_entry .
+
+  DATA: lv_lay   TYPE pri_params-paart,
+        lv_lines TYPE pri_params-linct,
+        lv_cols  TYPE pri_params-linsz,
+        lv_val   TYPE c.
+*Types
+  TYPES: lt_pripar TYPE pri_params,
+         lt_arcpar TYPE arc_params.
+  "Work areas
+  DATA: lw_pripar TYPE lt_pripar,
+        lw_arcpar TYPE lt_arcpar.
+
+* Get print parameter
+  lv_lay   = 'X_65_132'.
+  lv_lines = 65.
+  lv_cols  = 132.
+
+*** Read, determine, change spool print parameters and archive parameters
+  CALL FUNCTION 'GET_PRINT_PARAMETERS'
+    EXPORTING
+      in_archive_parameters  = lw_arcpar
+      in_parameters          = lw_pripar
+      layout                 = lv_lay
+      line_count             = lv_lines
+      line_size              = lv_cols
+      no_dialog              = 'X'
+    IMPORTING
+      out_archive_parameters = lw_arcpar
+      out_parameters         = lw_pripar
+      valid                  = lv_val
+    EXCEPTIONS
+      archive_info_not_found = 1
+      invalid_print_params   = 2
+      invalid_archive_params = 3
+      OTHERS                 = 4.
+  IF lv_val  NE space AND sy-subrc = 0.
+    lw_pripar-prrel = space.
+    lw_pripar-primm = space.
+    NEW-PAGE PRINT ON
+      NEW-SECTION
+      PARAMETERS lw_pripar
+      ARCHIVE PARAMETERS lw_arcpar
+      NO DIALOG.
+  ENDIF.
+  LOOP AT t_log INTO w_log.
+    WRITE: / w_log.
+  ENDLOOP.
+  NEW-PAGE PRINT OFF.
+  v_spool_no = sy-spono.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_SCREEN_MODIFY
+*&---------------------------------------------------------------------*
+* To Modify the Selection-Screen.
+*----------------------------------------------------------------------*
+
+FORM f_screen_modify .
+
+  LOOP AT SCREEN.
+    IF screen-group1 = 'TAB'.
+      screen-input = 0.
+    ENDIF.
+    MODIFY SCREEN.
+  ENDLOOP.
+
+*  CLEAR y_plant.
+*  READ TABLE t_plant INTO y_plant
+*                     WITH KEY zbXX_fld1 = _bdatu
+*                     BINARY SEARCH.
+*  IF sy-subrc = 0.
+*    p_bdatu = y_plant-zbXX_value1.
+*  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_VALIDATION_LOGSYS
+*&---------------------------------------------------------------------*
+*  Validation for logical system in selection screen
+*----------------------------------------------------------------------*
+
+FORM f_validation_logsys .
+
+  DATA v_logsys TYPE rfcdest.
+  IF NOT p_logsys IS INITIAL.
+    SELECT SINGLE rfcdest
+             FROM rfcdes
+             INTO v_logsys
+            WHERE rfcdest = p_logsys.
+    IF sy-subrc <> 0.
+     MESSAGE e015(ZPXX_PP) WITH p_logsys.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_MIGRATION_INIT
+*&---------------------------------------------------------------------*
+*  Fetch plant & Go-live date entries from Migration table
+*----------------------------------------------------------------------*
+
+FORM f_migration_init .
+
+* ** Fetch plant & Go-live date entries
+  SELECT zbXX_fld1
+         zbXX_value1
+            FROM zbXX_migration
+            INTO TABLE t_plant
+            WHERE zbXX_objectid = _XXXXXXXX "XXXXXXXX
+            AND zbXX_fld1    = _werks "plant
+*            OR zbXX_fld1    = _bdatu  "valid-to
+            AND zbXX_active  = _c_x. "active
+  IF sy-subrc = 0.
+    SORT t_plant BY zbXX_fld1 zbXX_value1.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FUNCTION ZPXX_mkal_bdc_prodver.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(CTU) LIKE  APQI-PUTACTIVE DEFAULT 'X'
+*"     VALUE(MODE) LIKE  APQI-PUTACTIVE DEFAULT 'N'
+*"     VALUE(UPDATE) LIKE  APQI-PUTACTIVE DEFAULT 'L'
+*"     VALUE(GROUP) LIKE  APQI-GROUPID OPTIONAL
+*"     VALUE(USER) LIKE  APQI-USERID OPTIONAL
+*"     VALUE(KEEP) LIKE  APQI-QERASE OPTIONAL
+*"     VALUE(HOLDDATE) LIKE  APQI-STARTDATE OPTIONAL
+*"     VALUE(NODATA) LIKE  APQI-PUTACTIVE DEFAULT '/'
+*"     VALUE(MATNR_001) LIKE  BDCDATA-FVAL DEFAULT 'F000293001'
+*"     VALUE(KZSEL_15_002) LIKE  BDCDATA-FVAL DEFAULT 'X'
+*"     VALUE(WERKS_003) LIKE  BDCDATA-FVAL DEFAULT '1011'
+*"     VALUE(ALTSL_004) LIKE  BDCDATA-FVAL DEFAULT '2'
+*"     VALUE(VERID_005) LIKE  BDCDATA-FVAL DEFAULT '0002'
+*"     VALUE(TEXT1_006) LIKE  BDCDATA-FVAL DEFAULT 'shift_02'
+*"     VALUE(BSTMI_007) LIKE  BDCDATA-FVAL DEFAULT '1.000,000'
+*"     VALUE(BSTMA_008) LIKE  BDCDATA-FVAL DEFAULT '9.999.999,000'
+*"     VALUE(ADATU_009) LIKE  BDCDATA-FVAL DEFAULT '08.06.2016'
+*"     VALUE(BDATU_010) LIKE  BDCDATA-FVAL DEFAULT '31.12.2999'
+*"     VALUE(PLNTY_011) LIKE  BDCDATA-FVAL DEFAULT 'N'
+*"     VALUE(PLNNR_012) LIKE  BDCDATA-FVAL DEFAULT '50000203'
+*"     VALUE(ALNAL_013) LIKE  BDCDATA-FVAL DEFAULT '1'
+*"     VALUE(PLTYG_014) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(PLNNG_015) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(ALNAG_016) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(PLTYM_017) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(PLNNM_018) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(ALNAM_019) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(STLAL_020) LIKE  BDCDATA-FVAL DEFAULT '3'
+*"     VALUE(STLAN_021) LIKE  BDCDATA-FVAL DEFAULT 'P'
+*"     VALUE(CSPLT_022) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(MATKO_023) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(ELPRO_024) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(ALORT_025) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(UCMAT_026) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(PRVBE_027) LIKE  BDCDATA-FVAL DEFAULT ''
+*"     VALUE(ALTSL_028) LIKE  BDCDATA-FVAL DEFAULT '2'
+*"     VALUE(T_MKAL) TYPE  CFB_TT_MKAL
+*"  EXPORTING
+*"     VALUE(SUBRC) LIKE  SYST-SUBRC
+*"     REFERENCE(T_RETURN) TYPE  BAPIRET2_T
+*"  TABLES
+*"      T_MESSTAB STRUCTURE  BDCMSGCOLL OPTIONAL
+*"----------------------------------------------------------------------
+*+---------------------------------------------------------------------+
+*| Author........... Saumya Mahapatra                                  |
+*| Development ID... XXXXXXXX                                          |
+*| Transport Req.... DXXXXXXXXX                                        |
+*+---------------------------------------------------------------------+
+*|Synthetical description : This custom function module is used to     |
+*|migrate the data of material production version through BDC.         |
+*|This Function module is a BDC recording of MM02 under MRP4 View for  |
+*| production version.                                                  |
+*+---------------------------------------------------------------------+
+*|Versioning                                                           |
+*|---------------------------------------------------------------------|
+*&|Version   Date        Auteur          Signature          Objet      |
+*|---------------------------------------------------------------------|
+*&|001      	     Saumya Mahapatra                    XXXXXXXX    |
+*&---------------------------------------------------------------------*
+
+
+  IF t_mkal[] IS NOT INITIAL.
+    PERFORM bdc_nodata      USING nodata.
+
+** create the session
+    PERFORM open_group      USING group user keep holddate ctu.
+
+** Collect the data
+    LOOP AT t_mkal INTO y_mkal.
+      v_bstmi = y_mkal-bstmi.
+      v_bstma = y_mkal-bstma.
+
+      PERFORM bdc_dynpro      USING 'SAPLMGMM' '0060'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'RMMG1-MATNR'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ENTR'.
+      PERFORM bdc_field       USING 'RMMG1-MATNR'
+                                    y_mkal-matnr.     "Material
+      PERFORM bdc_dynpro      USING 'SAPLMGMM' '0070'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'MSICHTAUSW-DYTXT(15)'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ENTR'.
+      PERFORM bdc_field       USING 'MSICHTAUSW-KZSEL(15)'
+                                    'X'.
+      PERFORM bdc_dynpro      USING 'SAPLMGMM' '0080'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'RMMG1-WERKS'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ENTR'.
+      PERFORM bdc_field       USING 'RMMG1-WERKS'
+                                    y_mkal-werks.    "Plant
+      PERFORM bdc_dynpro      USING 'SAPLMGMM' '4000'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=PB03'.
+
+      PERFORM bdc_dynpro      USING 'SAPLMDIA' '0100'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'MKAL-TEXT1(01)'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=NEWE'.
+      PERFORM bdc_dynpro      USING 'SAPLMDIA' '0200'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'MKAL-PRVBE'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ENTR'.
+      PERFORM bdc_field       USING 'MKAL-VERID'
+                                    y_mkal-verid.    "Version Id
+      PERFORM bdc_field       USING 'MKAL-TEXT1'
+                                    y_mkal-text1.    "version Text
+      PERFORM bdc_field       USING 'MKAL-BSTMI'
+                                     v_bstmi.    "Lower value lot-size
+      PERFORM bdc_field       USING 'MKAL-BSTMA'
+                                     v_bstma.    "Upper value lot-size
+**** Modify the date format for valid from
+      CONCATENATE y_mkal-adatu+6(2)
+                  y_mkal-adatu+4(2)
+                  y_mkal-adatu+0(4)
+                  INTO v_adatu SEPARATED BY '.'.
+
+      PERFORM bdc_field       USING 'MKAL-ADATU'    "valid from
+                                     v_adatu.
+**** Modify the date format for valid to
+      CONCATENATE y_mkal-bdatu+6(2)
+                  y_mkal-bdatu+4(2)
+                  y_mkal-bdatu+0(4)
+                  INTO v_bdatu SEPARATED BY '.'.
+
+      PERFORM bdc_field       USING 'MKAL-BDATU'    "valid to
+                                     v_bdatu.
+      PERFORM bdc_field       USING 'MKAL-PLNTY'  "Task List Type
+                                    y_mkal-plnty.
+      PERFORM bdc_field       USING 'MKAL-PLNNR'  "Key-Task List Group
+                                    y_mkal-plnnr.
+      PERFORM bdc_field       USING 'MKAL-ALNAL'  "Group Counter
+                                    y_mkal-alnal.
+      PERFORM bdc_field       USING 'MKAL-PLTYG'  "Task List Type
+                                    y_mkal-pltyg.
+      PERFORM bdc_field       USING 'MKAL-PLNNG'  "Key-Task List Group
+                                    y_mkal-plnng.
+      PERFORM bdc_field       USING 'MKAL-ALNAG'  "Group Counter
+                                    y_mkal-alnag.
+      PERFORM bdc_field       USING 'MKAL-PLTYM'  "Task List Type
+                                    y_mkal-pltym.
+      PERFORM bdc_field       USING 'MKAL-PLNNM'  "Key-Task List Group
+                                    y_mkal-plnnm.
+      PERFORM bdc_field       USING 'MKAL-ALNAM'  "Group Counter
+                                    y_mkal-alnam.
+      PERFORM bdc_field       USING 'MKAL-STLAL'  "Alternative BOM
+                                    y_mkal-stlal.
+      PERFORM bdc_field       USING 'MKAL-STLAN'  "BOM Usage
+                                    y_mkal-stlan.
+      PERFORM bdc_field       USING 'MKAL-CSPLT'  "Apportionment Structure
+                                    y_mkal-csplt.
+      PERFORM bdc_field       USING 'MKAL-MATKO'  "Other material
+                                    y_mkal-matko.
+      PERFORM bdc_field       USING 'MKAL-ELPRO'  "issue storage location
+                                    y_mkal-elpro.
+      PERFORM bdc_field       USING 'MKAL-ALORT'  "Receiving storage location
+                                    y_mkal-alort.
+      PERFORM bdc_field       USING 'MKAL-UCMAT'  "Reference Material
+                                    y_mkal-ucmat. "   for Original Batches
+      PERFORM bdc_field       USING 'MKAL-PRVBE'  "Default supply area
+                                    y_mkal-prvbe.
+      PERFORM bdc_dynpro      USING 'SAPLMDIA' '0100'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'MKAL-TEXT1(01)'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ENTR'.
+      PERFORM bdc_dynpro      USING 'SAPLMGMM' '4000'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=BU'.
+** call the transaction
+      PERFORM bdc_transaction TABLES t_messtab
+      USING                          'MM02'
+                                     ctu
+                                     mode
+                                     update.
+      IF sy-subrc <> 0.
+        subrc = sy-subrc.
+        CLEAR y_msg.
+
+** filling the log
+          LOOP AT t_messtab INTO y_msg.
+            CALL FUNCTION 'FORMAT_MESSAGE'
+              EXPORTING
+                id        = y_msg-msgid
+                lang      = '-D'
+                no        = y_msg-msgnr
+                v1        = y_msg-msgv1
+                v2        = y_msg-msgv2
+                v3        = y_msg-msgv3
+                v4        = y_msg-msgv4
+              IMPORTING
+                msg       = v_msg
+              EXCEPTIONS
+                not_found = 1
+                OTHERS    = 2.
+            IF sy-subrc EQ 0.
+              y_return-id         = y_msg-msgid.
+              y_return-number     = y_msg-msgnr.
+              y_return-message    = v_msg.
+              y_return-message_v1 = y_mkal-matnr.
+              y_return-message_v2 = y_mkal-werks.
+              y_return-message_v3 = y_mkal-verid.
+              APPEND y_return TO t_return.
+            ENDIF.
+            CLEAR : y_return, v_msg.
+          ENDLOOP.
+      ENDIF.
+
+      CLEAR: y_mkal, t_messtab[], v_bstmi.
+    ENDLOOP.
+  ENDIF.
+
+** close the session
+  PERFORM close_group USING     ctu.
+
+
+
+
+
+ENDFUNCTION.
+INCLUDE bdcrecxy .
+
+
